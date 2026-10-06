@@ -1,0 +1,27 @@
+name: "Corrección: una entrada está mal o desactualizada"
+description: Un número que no coincide, una norma que cambió, una fuente que no abre o algo mal explicado
+title: "Sección X, entrada Y: "
+labels: ["corrección"]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Qué entrada
+      description: Sección y número de entrada, por ejemplo «sección 13, entrada 2».
+      placeholder: Sección X, entrada Y
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qué está mal
+      description: Copiá la frase del texto y explicá cómo debería decir.
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Fuente
+      description: Artículo científico (DOI o PubMed), texto oficial de la norma (InfoLEG, SAIJ, Boletín Oficial) o página de un organismo oficial. No sirven blogs, notas sin fuente ni sitios comerciales.
+    validations:
+      required: true

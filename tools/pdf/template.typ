@@ -1,12 +1,13 @@
 $--
-$-- pandoc 的 typst 模板（只认 $body$ 和几个 -V 变量），不用 pandoc 自带的 conf()：
-$-- 自带模板把页面设置锁在 conf() 里，改不了页眉页脚，所以这里自己排。
-$-- 开头到 divider 那段是 pandoc 生成的正文要用的辅助定义，照抄自 `pandoc -D typst`，别删。
+$-- Plantilla typst para pandoc (solo usa $body$ y algunas variables -V). No usa el conf() de pandoc
+$-- porque deja fija la configuración de página y no permite cambiar encabezados y pies.
+$-- Lo que va desde el comienzo hasta «divider» son definiciones auxiliares que necesita el texto
+$-- generado por pandoc, copiadas de `pandoc -D typst`: no borrar.
 $--
 #set terms(hanging-indent: 1.5em)
 
 #set table(inset: 6pt, stroke: none)
-// pandoc 把表格塞进 align(center) 里，单元格会跟着居中，中文表格左对齐才好读
+// pandoc pone las tablas dentro de align(center); las celdas se leen mejor alineadas a la izquierda
 #show table.cell: it => align(left, it)
 
 #let horizontalRule = line(start: (25%, 0%), end: (75%, 0%))
@@ -14,16 +15,17 @@ $--
 
 #show figure.where(kind: table): set figure.caption(position: top)
 #show figure.where(kind: image): set figure.caption(position: bottom)
-// 长表格要能跨页，否则整块挤不下就留一页白
+// las tablas largas pueden cortarse entre páginas (si no, dejan una página en blanco)
 #show figure: set block(breakable: true)
 #set smartquote(enabled: false)
 
-// ---------- 版面 ----------
-#set document(title: "$booktitle$", author: "eternity4719")
+// ---------- Diseño ----------
+#set document(title: "$booktitle$", author: ("eternity4719 (original)", "VivirMejorAR (adaptación)"))
 #set text(
-  // 西文用 typst 自带的 Libertinus，中文按可用性往后找：CI 上是 Noto，本机是雅黑
-  font: ("Libertinus Serif", "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", "Noto Sans CJK SC", "Microsoft YaHei", "SimSun"),
-  size: 10.5pt, lang: "zh", region: "cn",
+  // Texto en Libertinus (viene con typst); las fuentes CJK quedan de respaldo para los nombres
+  // de archivo del original chino que aparecen en los capítulos pendientes.
+  font: ("Libertinus Serif", "Noto Serif CJK SC", "Noto Serif SC", "Source Han Serif SC", "Noto Sans CJK SC", "Microsoft YaHei"),
+  size: 10.5pt, lang: "es", region: "ar",
 )
 #set par(justify: false, leading: 0.78em, spacing: 0.9em)
 #set list(indent: 0.6em, spacing: 0.75em)
@@ -33,10 +35,10 @@ $--
 #show heading.where(level: 1): set text(19pt)
 #show heading.where(level: 2): set text(14pt)
 #show heading.where(level: 3): set text(11.5pt)
-// 每节另起一页；weak 保证前一页正好排满时不多出一张空页
+// cada sección empieza en página nueva; weak evita una página en blanco si la anterior quedó justa
 #show heading.where(level: 1): it => { pagebreak(weak: true); it }
 
-// 页眉：左边书名，右边当前节名；一节的头一页不打页眉
+// encabezado: título del libro a la izquierda y sección actual a la derecha; no va en la primera página de cada sección
 #let running-head = context {
   let next = query(selector(heading.where(level: 1)).after(here())).at(0, default: none)
   if next != none and next.location().page() == here().page() { return }
@@ -48,25 +50,26 @@ $--
   line(length: 100%, stroke: 0.4pt + luma(215))
 }
 
-// ---------- 封面 ----------
+// ---------- Portada (todavía sin imagen) ----------
 #set page(paper: "a4", margin: (x: 2.2cm, top: 2.2cm, bottom: 2cm), header: none, footer: none)
 #align(center + horizon)[
-  #image("/og.png", width: 100%)
+  #text(28pt, weight: "bold")[$booktitle$]
   #v(1.2cm)
   #block(width: 80%)[#text(11.5pt, fill: luma(60))[$subtitle$]]
   #v(2cm)
   #text(10pt, fill: luma(90))[
-    生成于 $builddate$（北京时间）　·　正文提交 $commit$ \
-    正文每天都在改，以在线版为准：$site$ \
-    在线检索、EPUB 与本 PDF 的最新版都在 $repo$
+    Generado el $builddate$ (hora de Buenos Aires) · commit $commit$ · original sincronizado hasta $upstream$ \
+    El texto se sigue actualizando; la referencia es la versión en línea: $site$ \
+    Buscador, EPUB y la última versión de este PDF: $repo$ \
+    Adaptación de «高性价比人生指南» de eternity4719, CC BY 4.0
   ]
 ]
 
-// ---------- 目录 ----------
+// ---------- Índice ----------
 #pagebreak()
-#outline(title: [目录], depth: 1, indent: 1em)
+#outline(title: [Índice], depth: 1, indent: 1em)
 
-// ---------- 正文 ----------
+// ---------- Texto ----------
 #pagebreak(weak: true)
 #set page(header: running-head, footer: context align(center, text(8.5pt, fill: luma(120))[#counter(page).at(here()).first() / #counter(page).final().first()]))
 #counter(page).update(1)

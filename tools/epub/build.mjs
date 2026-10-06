@@ -1,63 +1,66 @@
-// 把 README + book/*.md + docs/*.md 打成一本 EPUB 3。
-// 用法：node tools/epub/build.mjs [输出路径]   默认输出 dist/HowToLiveBetter.epub
-// 只依赖 marked；zip 自己写（EPUB 要求 mimetype 第一个且不压缩，通用 zip 库不一定保证）。
+// Arma un EPUB 3 con el README, libro/*.md y los textos largos en español de docs/.
+// Uso: node tools/epub/build.mjs [salida]   por defecto dist/VivirMejorAR.epub
+// Solo depende de marked; el zip se arma acá mismo (EPUB exige que «mimetype» vaya primero y sin
+// comprimir, y no todas las librerías de zip lo garantizan).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, posix } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { Marked, Tokenizer } from 'marked';
-import { ROOT, REPO, SITE, TITLE, read, readBook, gitCommit, buildStamp, stripBackLink } from '../lib/book.mjs';
+import { ROOT, REPO, SITE, TITLE, FILE_BASE, RELEASE as RELEASE_DIR, UPSTREAM_COMMIT, read, readBook, gitCommit, buildStamp, stripBackLink, attributionMd } from '../lib/book.mjs';
 
-const OUT = resolve(ROOT, process.argv[2] ?? 'dist/HowToLiveBetter.epub');
-const RELEASE = `${REPO}/releases/download/epub-latest/HowToLiveBetter.epub`;
-const BOOK_ID = 'urn:uuid:5c0c1c0e-6a5c-4d2b-9b1e-7d1f0a4e8c31';
+const OUT = resolve(ROOT, process.argv[2] ?? `dist/${FILE_BASE}.epub`);
+const RELEASE = `${RELEASE_DIR}/${FILE_BASE}.epub`;
+const BOOK_ID = 'urn:uuid:3b8f6a52-1d7e-4c0a-9f2e-6a4d2c9e7b15';
 const NOW = new Date();
 const COMMIT = gitCommit();
 
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const plain = html => html.replace(/<[^>]+>/g, '');
 
-// ---------- 从 README 取内容与文件清单 ----------
+// ---------- Contenido y lista de archivos, desde el README ----------
 const book = readBook();
 const { description, frontMd, bookFiles, docFiles } = book;
-const contentsMd = book.contentsMd.replace(/^## 目录/, '# 各节简介');
+const contentsMd = book.contentsMd.replace(/^## Índice/, '# Índice de secciones');
 
-// ---------- 页面清单 ----------
-// 每页：xhtml 文件名、来源 md 的仓库路径（用来解析相对链接）、md 正文
+// ---------- Páginas ----------
+// Cada página: archivo xhtml, ruta del md en el repo (para resolver enlaces relativos) y el md
 const pages = [
-  { file: 'front.xhtml', src: 'README.md', title: '前言', md: `# ${TITLE}\n\n${description}\n\n${frontMd}` },
-  { file: 'contents.xhtml', src: 'README.md', title: '各节简介', md: contentsMd },
+  { file: 'front.xhtml', src: 'README.md', title: 'Presentación', md: `# ${TITLE}\n\n${description}\n\n${frontMd}` },
+  { file: 'contents.xhtml', src: 'README.md', title: 'Índice de secciones', md: contentsMd },
   ...bookFiles.map((src, i) => ({ file: `ch${String(i + 1).padStart(2, '0')}.xhtml`, src, md: stripBackLink(read(src)) })),
   ...docFiles.map((src, i) => ({ file: `doc${i + 1}.xhtml`, src, md: stripBackLink(read(src)) })),
-  { file: 'about.xhtml', src: 'README.md', title: '版本说明', md: aboutMd() },
+  { file: 'about.xhtml', src: 'README.md', title: 'Acerca de esta versión', md: aboutMd() },
 ];
 const pageByPath = new Map(pages.map(p => [p.src, p.file]));
 pageByPath.set('README.md', 'front.xhtml');
 
 function aboutMd() {
-  const commitLine = COMMIT ? `- 对应提交：[${COMMIT.slice(0, 7)}](${REPO}/commit/${COMMIT})` : '';
-  return `# 版本说明
+  const commitLine = COMMIT ? `- Commit: [${COMMIT.slice(0, 7)}](${REPO}/commit/${COMMIT})` : '';
+  return `# Acerca de esta versión
 
-这本电子书由仓库里的 Markdown 正文自动生成，正文一改就重新生成一本。手里这本的版本：
+Este libro electrónico se genera automáticamente a partir del Markdown del repositorio cada vez que cambia el texto. Esta copia es la siguiente versión:
 
-- 生成时间：${buildStamp()}（北京时间）
+- Generado: ${buildStamp()} (hora de Buenos Aires)
 ${commitLine}
-- 最新版下载：${RELEASE}
-- 在线检索页（按关键词、章节、证据等级和成本筛选）：${SITE}
-- 仓库、提意见、看每条来源的核实记录：${REPO}
+- Original sincronizado hasta el commit \`${UPSTREAM_COMMIT}\`
+- Última versión: ${RELEASE}
+- Buscador en línea (por palabra, sección, nivel de evidencia y costo): ${SITE}
+- Repositorio y sugerencias: ${REPO}
 
-正文里指向仓库内其他文件的链接已改成书内跳转；指向核实记录、许可证这类没收进书的文件的链接改成了 GitHub 网址。
+Los enlaces a otros archivos del repositorio que forman parte del libro se convirtieron en saltos internos; los que apuntan a archivos que no están en el libro (el original chino, licencias) llevan a GitHub.
 
-正文以 CC BY 4.0 发布（https://creativecommons.org/licenses/by/4.0/）。可以转载、改编、商用，要写明出处「高性价比人生指南」并附仓库链接，改过内容的要注明改过。`;
+## Licencia y atribución
+
+${attributionMd()}`;
 }
 
 // ---------- Markdown → XHTML ----------
-let current = null; // 正在转换的页
+let current = null; // página que se está convirtiendo
 let headingSeq = 0;
 const marked = new Marked({ gfm: true });
 marked.use({
-  // GFM 的裸网址自动链接只在空白处断开，「www.12333.gov.cn网页、手机12333客户端」这种
-  // 中文紧贴网址的写法会把后面整串中文都吞进链接，epubcheck 判为非法 URL（RSC-020）。
-  // 裸网址里本来就不该有非 ASCII 字符，遇到就截在那里，截下的前半段照常按默认规则建链接。
+  // El autolink de GFM solo corta en espacios: un enlace pegado a texto no ASCII se tragaría el
+  // texto y epubcheck lo marcaría como URL inválida (RSC-020). Se corta en el primer carácter no ASCII.
   tokenizer: {
     url(src) {
       const tok = Tokenizer.prototype.url.call(this, src);
@@ -101,7 +104,7 @@ function toXhtml(body) {
 
 function wrap(title, body) {
   return `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="zh-CN" lang="zh-CN">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="es-AR" lang="es-AR">
 <head>
 <meta charset="utf-8"/>
 <title>${esc(title)}</title>
@@ -121,7 +124,7 @@ for (const p of pages) {
   p.xhtml = wrap(p.title, `<section epub:type="chapter">\n${body}</section>\n`);
 }
 
-// ---------- 导航 ----------
+// ---------- Navegación ----------
 const navItems = pages.map(p => {
   const [first, ...rest] = p.headings;
   const top = first?.depth === 1 ? { href: `${p.file}#${first.id}`, text: p.title } : { href: p.file, text: p.title };
@@ -129,16 +132,16 @@ const navItems = pages.map(p => {
   return { ...top, subs };
 });
 
-const navXhtml = wrap('目录', `<nav epub:type="toc" id="toc">
-<h1>目录</h1>
+const navXhtml = wrap('Índice', `<nav epub:type="toc" id="toc">
+<h1>Índice</h1>
 <ol>
 ${navItems.map(n => `<li><a href="${n.href}">${n.text}</a>${n.subs.length ? `\n<ol>\n${n.subs.map(s => `<li><a href="${s.href}">${s.text}</a></li>`).join('\n')}\n</ol>\n` : ''}</li>`).join('\n')}
 </ol>
 </nav>
 <nav epub:type="landmarks" hidden="hidden">
 <ol>
-<li><a epub:type="cover" href="cover.xhtml">封面</a></li>
-<li><a epub:type="bodymatter" href="${pages[2].file}">正文</a></li>
+<li><a epub:type="cover" href="cover.xhtml">Portada</a></li>
+<li><a epub:type="bodymatter" href="${pages[2].file}">Texto</a></li>
 </ol>
 </nav>
 `);
@@ -146,7 +149,7 @@ ${navItems.map(n => `<li><a href="${n.href}">${n.text}</a>${n.subs.length ? `\n<
 let play = 0;
 const navPoint = n => `<navPoint id="np${++play}" playOrder="${play}"><navLabel><text>${n.text}</text></navLabel><content src="${n.href}"/>${n.subs?.map(navPoint).join('') ?? ''}</navPoint>`;
 const ncx = `<?xml version="1.0" encoding="UTF-8"?>
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="zh-CN">
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="es-AR">
 <head>
 <meta name="dtb:uid" content="${BOOK_ID}"/>
 <meta name="dtb:depth" content="2"/>
@@ -160,29 +163,29 @@ ${navItems.map(navPoint).join('\n')}
 </ncx>
 `;
 
-// ---------- 封面、OPF、容器 ----------
-const coverXhtml = wrap(TITLE, `<div class="cover"><img src="cover.png" alt="${esc(TITLE)}"/></div>\n`);
+// ---------- Portada, OPF, contenedor ----------
+// Todavía no hay imagen de portada: la portada es una página de texto.
+const coverXhtml = wrap(TITLE, `<div class="cover"><h1>${esc(TITLE)}</h1><p>${esc(description)}</p></div>\n`);
 const modified = NOW.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const manifestPages = pages.map(p => `<item id="${p.file.replace('.xhtml', '')}" href="${p.file}" media-type="application/xhtml+xml"/>`);
 const opf = `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="zh-CN">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="es-AR">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="pub-id">${BOOK_ID}</dc:identifier>
 <dc:title>${TITLE}</dc:title>
-<dc:language>zh-CN</dc:language>
-<dc:creator>eternity4719</dc:creator>
+<dc:language>es-AR</dc:language>
+<dc:creator>eternity4719 (original)</dc:creator>
+<dc:contributor>VivirMejorAR (traducción y adaptación)</dc:contributor>
 <dc:description>${esc(description)}</dc:description>
 <dc:source>${REPO}</dc:source>
-<dc:rights>CC BY 4.0（https://creativecommons.org/licenses/by/4.0/）</dc:rights>
+<dc:rights>CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Adaptación modificada de «高性价比人生指南» de eternity4719, https://github.com/eternity4719/HowToLiveBetter</dc:rights>
 <dc:date>${NOW.toISOString().slice(0, 10)}</dc:date>
 <meta property="dcterms:modified">${modified}</meta>
-<meta name="cover" content="cover-img"/>
 </metadata>
 <manifest>
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
 <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 <item id="css" href="style.css" media-type="text/css"/>
-<item id="cover-img" href="cover.png" media-type="image/png" properties="cover-image"/>
 <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
 ${manifestPages.join('\n')}
 </manifest>
@@ -198,7 +201,7 @@ const container = `<?xml version="1.0" encoding="UTF-8"?>
 </container>
 `;
 
-// ---------- 打 zip ----------
+// ---------- Zip ----------
 const entries = [
   { name: 'mimetype', data: Buffer.from('application/epub+zip'), store: true },
   { name: 'META-INF/container.xml', data: Buffer.from(container) },
@@ -206,14 +209,13 @@ const entries = [
   { name: 'OEBPS/nav.xhtml', data: Buffer.from(navXhtml) },
   { name: 'OEBPS/toc.ncx', data: Buffer.from(ncx) },
   { name: 'OEBPS/style.css', data: readFileSync(resolve(ROOT, 'tools/epub/style.css')) },
-  { name: 'OEBPS/cover.png', data: readFileSync(resolve(ROOT, 'og.png')) },
   { name: 'OEBPS/cover.xhtml', data: Buffer.from(coverXhtml) },
   ...pages.map(p => ({ name: `OEBPS/${p.file}`, data: Buffer.from(p.xhtml) })),
 ];
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, zip(entries));
 const entryCount = pages.filter(p => p.file.startsWith('ch')).reduce((n, p) => n + p.headings.filter(h => h.depth === 3).length, 0);
-console.log(`已生成 ${OUT}：${bookFiles.length} 节 ${entryCount} 条，附录 ${docFiles.length} 篇，${(entries.reduce((n, e) => n + e.data.length, 0) / 1024 | 0)} KB 未压缩`);
+console.log(`Generado ${OUT}: ${bookFiles.length} secciones, ${entryCount} entradas, ${docFiles.length} textos largos, ${(entries.reduce((n, e) => n + e.data.length, 0) / 1024 | 0)} KB sin comprimir`);
 
 function zip(files) {
   const crcTable = new Int32Array(256).map((_, n) => {

@@ -1,0 +1,28 @@
+name: Proponer contenido
+description: Un tema que la guía todavía no cubre, o un dato argentino para un capítulo pendiente
+labels: ["contenido nuevo"]
+body:
+  - type: markdown
+    attributes:
+      value: La guía solo incluye recomendaciones que responden «qué cuesta y qué se gana», con fuentes primarias (artículos científicos y documentos oficiales). Las reglas de formato y de fuentes están en ESTILO.md.
+  - type: input
+    id: topic
+    attributes:
+      label: Tema
+      placeholder: Por ejemplo, cómo reclamar un despido sin causa
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Qué pregunta debería responder la guía
+      description: Lo más concreto posible, por ejemplo «a qué organismo ir y qué papeles llevar».
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Fuentes que conozcas (opcional)
+      description: Enlaces a artículos, normas o documentos oficiales.
+    validations:
+      required: false

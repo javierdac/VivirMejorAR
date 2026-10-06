@@ -1,41 +1,43 @@
-// 失效链接检查：把正文和长文里的外链挨个请求一遍，报出打不开的。
+// Control de enlaces caídos: pide cada enlace externo de libro/, los textos largos en español de
+// docs/ y el README, y reporta los que no abren.
 //
-//   node tools/check-links.mjs              # 全量检查，结果打到终端；在 GitHub Actions 里还写进 job summary
-//   node tools/check-links.mjs --limit 50   # 只查前 50 条，本地试跑用
+//   node tools/check-links.mjs              # todo; salida por consola y, en GitHub Actions, en el resumen del job
+//   node tools/check-links.mjs --limit 50   # solo los primeros 50, para probar
 //
-// 只报告，退出码恒为 0：gov.cn 一类站点从境外访问时通时不通，拿它挡构建只会天天红。
-// 结果分两档。「确定失效」只收 404 和 410，以及 DOI 在 doi.org 登记处查不到的，这一档要回去修。
-// 「没连上」是超时、403、5xx 这类，多半是对方挡了机房 IP 或临时故障，连着几周都在才值得看。
+// Solo informa: el código de salida es siempre 0. Hay sitios oficiales que desde servidores de
+// otros países a veces responden y a veces no, y frenar el build por eso no sirve.
+// Tres grupos: «caídos seguro» (404, 410 y DOI inexistente en doi.org), que hay que arreglar;
+// «no conectó» (tiempo agotado, 403, 5xx), que solo vale la pena mirar si se repite varias semanas;
+// y «TLS incompatible» (sitios viejos que Node rechaza y el navegador abre).
 //
-// DOI 不去打开出版商页面：Wiley、SAGE 这些站对机器请求一律 403，查了也白查。
-// 改问 doi.org 的登记处接口，它只回答「这个 DOI 存不存在」，正好是这里要的。
-import { readFileSync, readdirSync, appendFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Los DOI no se abren en la editorial (muchas devuelven 403 a cualquier robot): se consulta la API
+// de doi.org, que solo responde si el DOI existe.
+import { readFileSync, appendFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { ROOT, GH_USER, listChapters, listDocs } from './lib/book.mjs';
 const limitArg = process.argv.indexOf('--limit');
 const LIMIT = limitArg > 0 ? Number(process.argv[limitArg + 1]) : Infinity;
 const CONCURRENCY = 8;
 const TIMEOUT = 20000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
-// 链接从哪来：book/ 每节、docs/ 根下的长文（核实记录是历史状态，不查）、README。
+// De dónde salen los enlaces: libro/, textos largos en español de docs/ y el README.
 const files = [
-  ...readdirSync(resolve(ROOT, 'book')).filter(f => /^\d\d-.*\.md$/.test(f)).map(f => `book/${f}`),
-  ...readdirSync(resolve(ROOT, 'docs')).filter(f => f.endsWith('.md') && f !== '引用对照.md').map(f => `docs/${f}`),
+  ...listChapters().map(f => `libro/${f}`),
+  ...listDocs().map(f => `docs/${f}`),
   'README.md',
 ];
 
-// url -> 第一次出现的位置
+// url -> primer lugar donde aparece
 const where = new Map();
 for (const f of files) {
   readFileSync(resolve(ROOT, f), 'utf8').split(/\r?\n/).forEach((line, i) => {
-    // 来源栏的链接写成 <url>，尖括号里的整段就是链接，DOI 里的括号（10.1016/S0140-6736(15)01225-8）
-    // 也原样保留；裸写的链接按空白和中文标点截断，再去掉末尾不成对的右括号。
+    // En Fuentes los enlaces van como <url>: se toma todo lo de adentro, incluidos los paréntesis de
+    // algunos DOI (10.1016/S0140-6736(15)01225-8). Los enlaces sueltos se cortan en espacios y
+    // puntuación, y se les saca un paréntesis de cierre final que no tenga pareja.
     const found = [...line.matchAll(/<(https?:\/\/[^>\s]+)>/g)].map(m => m[1]);
     const rest = line.replace(/<https?:\/\/[^>\s]+>/g, '');
-    for (const m of rest.matchAll(/https?:\/\/[^\s<>（）「」，。；、"'`\]]+/g)) {
+    for (const m of rest.matchAll(/https?:\/\/[^\s<>（）「」，。；、«»"'`\]]+/g)) {
       let url = m[0].replace(/[.,;:]+$/, '');
       while (url.endsWith(')') && (url.match(/\(/g) ?? []).length < (url.match(/\)/g) ?? []).length) url = url.slice(0, -1);
       found.push(url);
@@ -43,26 +45,27 @@ for (const f of files) {
     for (const url of found) if (!where.has(url)) where.set(url, `${f}:${i + 1}`);
   });
 }
-// 徽章、检索页自身、Release 下载链接不查：它们不是来源，挂了也会有别的地方先发现。
-const SKIP = /img\.shields\.io|eternity4719\.github\.io|\/releases\/download\/|localhost/;
-// 不少地方政府站还用着老的加密套件或证书链不全，Node 握手直接报错，浏览器却能正常打开。
-// 这类单独一档，不和真正连不上的混在一起。
+// No se revisan insignias, el propio sitio, las descargas de releases ni los enlaces al repo del
+// fork (pueden no existir todavía): no son fuentes.
+const SKIP = new RegExp(`img\\.shields\\.io|${GH_USER}\\.github\\.io|github\\.com/${GH_USER}/|/releases/download/|localhost`);
+// Algunos sitios oficiales usan cifrados viejos o cadenas de certificados incompletas: Node falla
+// y el navegador abre. Van en un grupo aparte.
 const TLS = /^(ERR_SSL_|UNABLE_TO_VERIFY|CERT_|SELF_SIGNED|DEPTH_ZERO)/;
 const urls = [...where.keys()].filter(u => !SKIP.test(u)).slice(0, LIMIT);
 
-const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('超时')), ms))]);
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('tiempo agotado')), ms))]);
 
 async function checkDoi(doi) {
   const r = await withTimeout(fetch(`https://doi.org/api/handles/${encodeURIComponent(doi)}`), TIMEOUT);
-  if (r.status === 404) return { dead: true, why: 'doi.org 查无此 DOI' };
-  if (!r.ok) return { dead: false, why: `doi.org 返回 ${r.status}` };
+  if (r.status === 404) return { dead: true, why: 'doi.org: el DOI no existe' };
+  if (!r.ok) return { dead: false, why: `doi.org respondió ${r.status}` };
   return null;
 }
 
 async function checkUrl(url) {
   const doi = /^https?:\/\/(?:dx\.)?doi\.org\/(.+)$/i.exec(url);
   if (doi) return checkDoi(decodeURIComponent(doi[1]));
-  // 先 GET 不先 HEAD：有的站 HEAD 返回 403 而 GET 正常（海南省药监局就是这样），用 HEAD 会误判成死链。
+  // GET y no HEAD: hay sitios que responden 403 a HEAD y 200 a GET.
   const r = await withTimeout(fetch(url, { redirect: 'follow', headers: { 'User-Agent': UA, Accept: 'text/html,*/*' } }), TIMEOUT);
   r.body?.cancel().catch(() => {});
   if ([404, 410].includes(r.status)) return { dead: true, why: `${r.status}` };
@@ -88,23 +91,23 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-const sortAt = a => a.sort((x, y) => x.at.localeCompare(y.at, 'zh'));
+const sortAt = a => a.sort((x, y) => x.at.localeCompare(y.at, 'es'));
 const lines = [
-  `## 失效链接检查`,
+  `## Enlaces caídos`,
   ``,
-  `共查 ${urls.length} 条链接，确定失效 ${dead.length} 条，没连上 ${flaky.length} 条，加密握手不兼容 ${tls.length} 条。`,
+  `Se revisaron ${urls.length} enlaces: ${dead.length} caídos seguro, ${flaky.length} que no conectaron y ${tls.length} con TLS incompatible.`,
   ``,
-  `### 确定失效（404、410、DOI 查无此号）`,
+  `### Caídos seguro (404, 410, DOI inexistente)`,
   ``,
-  ...(dead.length ? sortAt(dead).map(d => `- ${d.at}　${d.why}　${d.url}`) : ['无']),
+  ...(dead.length ? sortAt(dead).map(d => `- ${d.at}　${d.why}　${d.url}`) : ['Ninguno']),
   ``,
-  `### 没连上（超时、403、5xx，多半是对方挡了机房 IP，连着几周都在才值得看）`,
+  `### No conectaron (tiempo agotado, 403, 5xx; mirarlos solo si se repiten varias semanas)`,
   ``,
-  ...(flaky.length ? sortAt(flaky).map(d => `- ${d.at}　${d.why}　${d.url}`) : ['无']),
+  ...(flaky.length ? sortAt(flaky).map(d => `- ${d.at}　${d.why}　${d.url}`) : ['Ninguno']),
   ``,
-  `### 加密握手不兼容（老政府站的加密方式 Node 不认，浏览器一般能开，不用修）`,
+  `### TLS incompatible (Node no acepta el cifrado del sitio; en el navegador suelen abrir)`,
   ``,
-  ...(tls.length ? sortAt(tls).map(d => `- ${d.at}　${d.why}　${d.url}`) : ['无']),
+  ...(tls.length ? sortAt(tls).map(d => `- ${d.at}　${d.why}　${d.url}`) : ['Ninguno']),
   ``,
 ];
 console.log(lines.join('\n'));

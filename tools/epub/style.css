@@ -13,4 +13,5 @@ th, td { border: 1px solid #999999; padding: 0.3em 0.4em; vertical-align: top; t
 blockquote { margin: 1em 0; padding-left: 1em; border-left: 3px solid #cccccc; color: #555555; }
 hr { border: 0; border-top: 1px solid #cccccc; margin: 1.5em 0; }
 .cover { text-align: center; }
-.cover img { max-width: 100%; }
+.cover h1 { font-size: 2em; margin: 30% 0 0.6em; }
+.cover p { color: #555555; }

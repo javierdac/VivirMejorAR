@@ -1,8 +1,8 @@
 {
-  "name": "howtolivebetter-epub",
+  "name": "vivirmejorar-epub",
   "private": true,
   "type": "module",
-  "description": "把 README + book/*.md + docs/*.md 打成 EPUB",
+  "description": "Arma el EPUB con README, libro/*.md y docs/",
   "scripts": {
     "build": "node build.mjs"
   },
